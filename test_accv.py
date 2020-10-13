@@ -2,6 +2,8 @@
 Test the cub validation result
 """
 import os 
+import csv
+import json
 import torch
 import numpy as np
 import urllib.request as urt
@@ -20,11 +22,11 @@ PATH = "/data/remote/yy_git_code/cub_baseline"
 class TestDataSet(Dataset):
     def __init__(self):
         super(TestDataSet, self).__init__()
-        self.test_file = "/data/remote/yy_git_code/cub_baseline/dataset/cub_test.txt"
+        self.test_file = "/data/remote/yy_git_code/cub_baseline/dataset/test_accv.txt"
         # self.test_file = "/data/remote/code/classification_trick_with_model/data/val_imagenet_128w.txt"
         self.test_list = [(x.strip().split(',')[0], int(float(x.strip().split(',')[1]))) for x in open(self.test_file).readlines()]
-        self.Resize_size = 640
-        self.input_size = 600
+        self.Resize_size = 300
+        # self.input_size = 300
         self.imagenet_normalization_paramters = transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225]
@@ -36,7 +38,7 @@ class TestDataSet(Dataset):
         if image.mode != "RGB":
             image = image.convert("RGB")
         image = transforms.Resize((self.Resize_size, self.Resize_size), Image.BILINEAR)(image)
-        image = transforms.CenterCrop(self.input_size)(image)
+        # image = transforms.CenterCrop(self.input_size)(image)
         image = transforms.ToTensor()(image)
         image = self.imagenet_normalization_paramters(image)
         return image, url
@@ -87,24 +89,35 @@ def calculate_accuracy(test_gt, test_pd):
 
 if __name__ == "__main__":
     
-    test_file = "/data/remote/yy_git_code/cub_baseline/dataset/cub_test.txt"
+    test_file = "/data/remote/yy_git_code/cub_baseline/dataset/test_accv.txt"
     # test_file = "/data/remote/code/classification_trick_with_model/data/val_imagenet_128w.txt"
     test_dict = {x.split(',')[0]: int(float(x.split(',')[1]))
                  for x in open(test_file).readlines()}
-    model_ckpt = "/data/remote/output_ckpt_with_logs/cub/ckpt/efnetb6_resize_640_crop_600_lr_01_90_epoch/checkpoint-epoch-88.pth.tar"
-    model = CUBModel(model_name="efficientnet-b7", num_classes=200, model_weights=model_ckpt)
-    batch_size = 64
+    model_ckpt = "/data/remote/output_ckpt_with_logs/accv/ckpt/efnet-b3_300_lr_01_60_epoch/checkpoint-epoch-58.pth.tar"
+    model = CUBModel(model_name="efficientnet-b3", num_classes=5000, model_weights=model_ckpt)
+    batch_size = 156
     num_workers = 32
     test_dataset = TestDataSet()
 
     testLoader = DataLoader(test_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=False, drop_last=False)
-    with open(os.path.join(PATH, "test_predict_cub.txt"), "w") as file:
+    
+    # csv for predict label
+    # with open(os.path.join(PATH, "test_predict_accv_r50.csv"), "w") as csvfile:
+    #     writer = csv.writer(csvfile)
+    #     writer.writerow(["image_name", "class"])
+    #     for idx, data in tqdm(enumerate(testLoader)):
+    #         image_tensor, image_path = data[0], data[1]
+    #         data_logits = model.infer_batch(image_tensor).cpu().numpy()
+    #         data_pred = np.argmax(softmax(data_logits, axis=1), axis=1).tolist()
+    #         for i in range(len(image_path)):
+    #             writer.writerow([image_path[i].split('/')[-1], str(data_pred[i])])
+
+    # predict logits
+    with open(os.path.join(PATH, "logits/efnetb3_logits.log"), "w") as file:
         for idx, data in tqdm(enumerate(testLoader)):
             image_tensor, image_path = data[0], data[1]
             data_logits = model.infer_batch(image_tensor).cpu().numpy()
             data_pred = np.argmax(softmax(data_logits, axis=1), axis=1).tolist()
             for i in range(len(image_path)):
-                file.write(image_path[i] + ',' + str(data_pred[i]) + '\n')
-
-        
-    calculate_accuracy(os.path.join(PATH, "test_predict_cub.txt"), test_file)
+                result = {"image_path": image_path[i].split('/')[-1], "image_logits": data_logits[i].tolist()}
+                file.write(json.dumps(result) + '\n')
