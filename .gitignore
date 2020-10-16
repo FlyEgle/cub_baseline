@@ -9,4 +9,4 @@ dataset/generate_accv_dataset.py
 *.jpg
 !get_csv.py
 !get_logits.py
-!merget_logits.py
+!merge_logits.py

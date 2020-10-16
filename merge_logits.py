@@ -7,8 +7,12 @@ import numpy as np
 from scipy.special import softmax
 from tqdm import tqdm
 
-data_file1 = "/data/remote/yy_git_code/cub_baseline/test_predict_accv_logits.log"
-data_file2 = "/data/remote/yy_git_code/cub_baseline/test_predict_accv_logits2.log"
+# data_file1 = "/data/remote/yy_git_code/cub_baseline/logits/efnetb3_logits.log"
+# data_file2 = "/data/remote/yy_git_code/cub_baseline/logits/efnetb4_logits.log"
+# data_file3 = "/data/remote/yy_git_code/cub_baseline/logits/r50_logits.log"
+data_file1 = "/data/remote/yy_git_code/cub_baseline/logits/20201016/efnetb5_456_cosinelr_logits.log"
+data_file2 = "/data/remote/yy_git_code/cub_baseline/logits/20201016/r50_448_cosinelr_logits.log"
+data_file3 = "/data/remote/yy_git_code/cub_baseline/logits/efnetb4_logits.log"
 
 
 def trainslate_dict(data_file):
@@ -23,33 +27,41 @@ def trainslate_dict(data_file):
 
 data_dict1 = trainslate_dict(data_file1)
 data_dict2 = trainslate_dict(data_file2)
+data_dict3 = trainslate_dict(data_file3)
 
 
 PATH = "/data/remote/yy_git_code/cub_baseline/ensemble"
 if not os.path.exists(PATH):
     os.mkdir(PATH)
 
-with open(os.path.join(PATH, "resnet50_224_efnetb2_logits.log"), "w") as file:
-    for key, value in tqdm(data_dict1.items()):
-        if key in data_dict2.keys():
-            array1 = np.array(value)
-            array2 = np.array(data_dict2[key])
-            # print(array1.shape)   
-            m_array = (array1 + array2) / 2
-            data_json = {"image_path":key, "image_logits":m_array.tolist()}
-            file.write(json.dumps(data_json) + '\n')
-# # merge 
-# with open(os.path.join(PATH, "resnet50_efnetb3_pred.csv"), "w") as csvfile:
-#     writer = csv.writer(csvfile)
-#     writer.writerow(["image_name", "class"])
+# with open(os.path.join(PATH, "r50_efnet3_efnet4.log"), "w") as file:
 #     for key, value in tqdm(data_dict1.items()):
 #         if key in data_dict2.keys():
 #             array1 = np.array(value)
 #             array2 = np.array(data_dict2[key])
+#             array3 = np.array(data_dict3[key])
 #             # print(array1.shape)   
-#             m_array = (array1 + array2) / 2
-#             predlabel = np.argmax(softmax(m_array))
-#             writer.writerow([key, str(predlabel)])
+#             m_array = (array1 + array2 + array3) / 3
+#             data_json = {"image_path":key, "image_logits":m_array.tolist()}
+#             file.write(json.dumps(data_json) + '\n')
+# ensemble method
+ensemble_method = "mean"
+
+# # merge 
+with open(os.path.join(PATH, "r50_efnetb5_efnetb4_mean.csv"), "w") as csvfile:
+    writer = csv.writer(csvfile)
+    writer.writerow(["image_name", "class"])
+    for key, value in tqdm(data_dict1.items()):
+        if key in data_dict2.keys():
+            array1 = np.array(value)
+            array2 = np.array(data_dict2[key])
+            array3 = np.array(data_dict3[key])
+            # print(array1.shape)   
+            if ensemble_method == "mean":
+                m_array = (array1 + array2 + array3) / 3
+            # TODO: vote method
+            predlabel = np.argmax(softmax(m_array))
+            writer.writerow([key, str(predlabel)])
             
 
 
