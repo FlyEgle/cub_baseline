@@ -7,6 +7,9 @@ class ModelSize:
     def __init__(self, net_name):
         self.net_name = net_name
 
+    def _regnet_320(self):
+        return {"resize": 384, "input": 336 }
+
     def _resnet50_448(self):
         return {"resize": 512, "input": 448}
 
@@ -58,3 +61,5 @@ class ModelSize:
             return self._efnet_b6_528()
         elif self.net_name == "efnet-b7":
             return self._efnet_b7_600()
+        elif self.net_name == "regnet_320":
+            return self._regnet_320()

@@ -26,12 +26,18 @@ import torch.nn.functional as F
 import torch.utils.data.distributed
 import torch.backends.cudnn as cudnn
 
+from models.build_model import BuildModel
+from models.bcnn import BCNN_fc
+from precise_bn import get_bn_modules
+
 from tqdm import tqdm
 from PIL import ImageFile
 from tensorboardX import SummaryWriter
-from models.build_model import BuildModel
 from torchvision import datasets, transforms, models
 from dataset.imagenet_dataset import ImageNetTrainingDataset, ImageNetValidationDataset
+
+# cutmix
+from utils.cutmix import cutmix_data
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -113,6 +119,12 @@ parser.add_argument('--finetune', type=int, default=0,
 # rank 0: average metrics with rank 0 for distributed training
 parser.add_argument('--cosine_lr', type=int, default=0,
                     help="cosine lr for training loop")
+parser.add_argument('--mixup', type=int, default=0,
+                    help="mixup for data augment")
+parser.add_argument('--cutmix', type=int, default=0,
+                    help="use cutmix for data augment")
+parser.add_argument('--beta', type=int, default=1,
+                    help="beta for cutmix param with two image")
 
 
 class Metric_rank:
@@ -172,9 +184,18 @@ def train_with_iter(epoch, interval, batch_iter):
             else:
                 data, target = data.half().cuda(), target.cuda()
 
+        # cutmix
+        if args.cutmix:
+            data, target_a, target_b, lam = cutmix_data(data, target, args.beta)
+            output = model(data)
+            loss = F.cross_entropy(output, target_a) * lam + F.cross_entropy(output, target_b) * (1. - lam)
+        
+        else:
+            output = model(data)
+            loss = F.cross_entropy(output, target)
+
+        # compute gradient and do SGD step
         optimizer.zero_grad()
-        output = model(data)
-        loss = F.cross_entropy(output, target)
         loss.backward()
         optimizer.step()
 
@@ -187,7 +208,7 @@ def train_with_iter(epoch, interval, batch_iter):
                 learning_rate = param_group["lr"]
 
             waste_time = time.time() - batch_start
-            print("Training Epoch: [{}/{}] batch: [{}/{}] batchiter: [{}/{}] Loss: {:.4f} Accuracy_lv1: {:.4f} Learning_rate: {:.6f} Time: {:.2f} date: {}".format(
+            print("Training Epoch: [{}/{}] batch: [{}/{}] batchiter: [{}/{}] Loss: {:.4f} Accuracy: {:.4f} Learning_rate: {:.6f} Time: {:.2f} date: {}".format(
                 epoch, args.epochs, batch_idx+1, total_train_sampler, batch_iter, total_train_sampler *
                 args.epochs, loss.item(), train_acc.item(
                 ), learning_rate, waste_time, str(datetime.datetime.now())
@@ -210,7 +231,7 @@ def train_with_iter(epoch, interval, batch_iter):
                     'learning_rate', learning_rate, batch_iter)
 
     # validaiton with each epoch
-    if args.val_dir is not None or args.val_dir != "":
+    if args.val_dir is not None and args.val_dir != "":
         validation_rank, val_acc = validatin_acc()
         if hvd.rank() == 0:
             print("Validation Epoch: [{}/{}] batchiter: [{}/{}] Loss: {:.4f} RankLoss: {:.4f} Accuracy: {:.4f} Time: {:.2f}".format(
@@ -463,7 +484,7 @@ if __name__ == "__main__":
         **kwargs
     )
 
-    if args.val_dir is not None or args.val_dir != "":
+    if args.val_dir is not None and args.val_dir != "":
         valDataset = ImageNetValidationDataset(args.val_dir)
         valSampler = torch.utils.data.distributed.DistributedSampler(
             valDataset,
@@ -488,7 +509,7 @@ if __name__ == "__main__":
         total_train_sampler = int(train_iter)
 
     # 验证数据的迭代次数
-    if args.val_dir is not None or args.val_dir != "":
+    if args.val_dir is not None and args.val_dir != "":
         total_validation_sampler = 0
         val_iter = len(valDataset) / (args.batch_size * hvd.size())
         if val_iter - int(val_iter) > 0.0:
@@ -507,6 +528,14 @@ if __name__ == "__main__":
             print("Not use the imagenet pretrain")
     build_model = BuildModel(args.model_name, args.num_classes, imagenet_pretrain)
     model = build_model()
+
+    # fp16
+    if args.fp16:
+        model = model.half()
+        for bn in get_bn_modules(model):
+            bn.float()
+
+    # model = BCNN_fc(num_classes=args.num_classes)
     if hvd.rank() == 0:
         print(model)
     # load the pretrain model weights

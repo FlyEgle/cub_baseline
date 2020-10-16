@@ -23,8 +23,8 @@ class TestDataSet(Dataset):
         self.test_file = "/data/remote/yy_git_code/cub_baseline/dataset/cub_test.txt"
         # self.test_file = "/data/remote/code/classification_trick_with_model/data/val_imagenet_128w.txt"
         self.test_list = [(x.strip().split(',')[0], int(float(x.strip().split(',')[1]))) for x in open(self.test_file).readlines()]
-        self.Resize_size = 640
-        self.input_size = 600
+        self.Resize_size = 512
+        self.input_size = 448
         self.imagenet_normalization_paramters = transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225]
@@ -91,8 +91,8 @@ if __name__ == "__main__":
     # test_file = "/data/remote/code/classification_trick_with_model/data/val_imagenet_128w.txt"
     test_dict = {x.split(',')[0]: int(float(x.split(',')[1]))
                  for x in open(test_file).readlines()}
-    model_ckpt = "/data/remote/output_ckpt_with_logs/cub/ckpt/efnetb6_resize_640_crop_600_lr_01_90_epoch/checkpoint-epoch-88.pth.tar"
-    model = CUBModel(model_name="efficientnet-b7", num_classes=200, model_weights=model_ckpt)
+    model_ckpt = "/data/remote/output_ckpt_with_logs/cub/ckpt/best_acc_08456.pth.tar"
+    model = CUBModel(model_name="resnet50", num_classes=200, model_weights=model_ckpt)
     batch_size = 64
     num_workers = 32
     test_dataset = TestDataSet()

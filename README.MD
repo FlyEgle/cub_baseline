@@ -32,6 +32,7 @@ transforms.Resize((self.BASE_RESIZE_SIZE, self.BASE_RESIZE_SIZE), Image.BILINEAR
 |efnet-b5 512->456| 85.64%|
 |efnet-b6 600->528| 87.05%|
 |efnet-b7 640->600| 88.11%|
+<!-- |resnest50 256->224|| -->
 
 
 
@@ -54,6 +55,8 @@ transforms.Resize((self.BASE_RESIZE_SIZE, self.BASE_RESIZE_SIZE), Image.BILINEAR
 |:---:|:---:|
 |efnetb2 260| 41.975|
 |resnet50 224|36.11|
-|efnetb2+resnest50 |43.105|
-|efnetb3 300||
-|resnet50 448||
+|efnetb2+resnet50_224 ensemble1|43.105|
+|efnetb3 300|	42.395|
+|resnet50 448|	41.63|
+|efnetb3+resnet50_448 ensemble2|	47.05|
+|ensemble1+ensemble2|47.395|

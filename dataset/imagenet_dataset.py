@@ -22,13 +22,16 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader, Sampler
 from torchvision.transforms import transforms
 
+from utils.autoaugment import ImageNetPolicy
+from .config import ModelSize
+
 np.random.seed(42)
 random.seed(42)
 
 
 # train dataset
 class ImageNetTrainingDataset(Dataset):
-    def __init__(self, image_file):
+    def __init__(self, image_file, autoaugment=False):
         super(ImageNetTrainingDataset, self).__init__()
         self.image_file = image_file
         # self.data = None
@@ -42,29 +45,47 @@ class ImageNetTrainingDataset(Dataset):
             std=[0.229, 0.224, 0.225]
         )
         # 先resize到512 再crop到448
-        self.BASE_RESIZE_SIZE = 512
-        self.INPUT_SIZE = 448
+        # 用config来指定模型的size
+        self.model_size = ModelSize("resnet50_448")
+        model_size = self.model_size.imagesize_choice()
+        self.BASE_RESIZE_SIZE = model_size["resize"]
+        self.INPUT_SIZE = model_size["input"]
         self.BRIGHTNESS = 0.4
         self.HUE = 0.1
         self.CONTRAST = 0.4
         self.SATURATION = 0.4
 
+        # autoaugment
+        self.Autoaugment = autoaugment
+
         self.index_sampler = [i for i in range(len(self.data))]
         
 
         # 当前的数据增强【随机crop, 随机水平翻转，颜色变换，随机灰度，】
-        self.image_transforms = transforms.Compose(
-            [
-                # transforms.RandomResizedCrop(self.INPUT_SIZE, scale=(0.2, 1.)),
-                # transforms.Resize((self.BASE_RESIZE_SIZE, self.BASE_RESIZE_SIZE), Image.BILINEAR),
-                transforms.RandomCrop(self.INPUT_SIZE),
-                transforms.RandomHorizontalFlip(),
-                transforms.RandomRotation(degrees=15),
-                transforms.ColorJitter(brightness=self.BRIGHTNESS, contrast=self.CONTRAST, hue=self.HUE, saturation=self.SATURATION),
-                transforms.ToTensor(),
-                self.imagenet_normalization_paramters
-            ]
-        )
+        if self.Autoaugment:
+            self.image_transforms = transforms.Compose(
+                [
+                    transforms.Resize((self.BASE_RESIZE_SIZE, self.BASE_RESIZE_SIZE), Image.BILINEAR),
+                    transforms.RandomCrop(self.INPUT_SIZE),
+                    transforms.RandomHorizontalFlip(),
+                    ImageNetPolicy(),
+                    transforms.ToTensor(),
+                    self.imagenet_normalization_paramters
+                ]
+            )
+        else: 
+            self.image_transforms = transforms.Compose(
+                [
+                    # transforms.RandomResizedCrop(self.INPUT_SIZE, scale=(0.2, 1.)),
+                    transforms.Resize((self.BASE_RESIZE_SIZE, self.BASE_RESIZE_SIZE), Image.BILINEAR),
+                    transforms.RandomCrop(self.INPUT_SIZE),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.RandomRotation(degrees=15),
+                    transforms.ColorJitter(brightness=self.BRIGHTNESS, contrast=self.CONTRAST, hue=self.HUE, saturation=self.SATURATION),
+                    transforms.ToTensor(),
+                    self.imagenet_normalization_paramters
+                ]
+            )
 
     def _get_image_label(self, text_lines):
         image_path = text_lines.split('\n')[0].split(',')[0]
@@ -84,6 +105,7 @@ class ImageNetTrainingDataset(Dataset):
 
         for i in range(10):
             image_url, image_lbl = self._get_image_label(self.data[idx])
+            # print(image_url)
             assert type(image_lbl) == int, "the label type must be the int"
             try:
                 with ur.urlopen(image_url, timeout=10.0) as file:
@@ -92,9 +114,7 @@ class ImageNetTrainingDataset(Dataset):
 
                 if image.mode != "RGB":
                     image = image.convert("RGB")
-                # 保持长宽比进行resize
-                image = self._resize_image(image, self.BASE_RESIZE_SIZE)
-                # image = transforms.Resize((self.BASE_RESIZE_SIZE, self.BASE_RESIZE_SIZE), Image.BILINEAR)(image)
+                
                 image_tensor = self.image_transforms(image)
 
                 label = torch.tensor(np.array(image_lbl)).long()
@@ -137,8 +157,10 @@ class ImageNetValidationDataset(Dataset):
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225]
         )
-        self.RESIZE_SIZE = 512
-        self.INPUT_SIZE = 448
+        self.model_size = ModelSize("resnet50_448")
+        model_size = self.model_size.imagesize_choice()
+        self.RESIZE_SIZE = model_size["resize"]
+        self.INPUT_SIZE = model_size["input"]
         self.index_sampler = [i for i in range(len(self.data))]
 
     def _get_image_label(self, text_lines):
@@ -212,25 +234,26 @@ if __name__ == "__main__":
     import math
     import time
     from torch.utils.data import DataLoader
-    train_file = "/data/remote/yy_git_code/cub_baseline/dataset/cub_test.txt"
-    train_datset = ImageNetValidationDataset(train_file)
-    for image, lbl in train_datset:
-        print(image.shape, lbl.shape)
-    # train_dataloader = DataLoader(
-    #     train_datset,
-    #     batch_size=64,
-    #     num_workers=32,
-    #     shuffle=False,
-    #     drop_last=False
-    # ) 
+    train_file = "/data/remote/yy_git_code/cub_baseline/dataset/train_accv_shuf.txt"
+    train_datset = ImageNetTrainingDataset(train_file)
+    # for image, lbl in train_datset:
+    #     print(image.shape, lbl.shape)
+    train_dataloader = DataLoader(
+        train_datset,
+        batch_size=64,
+        num_workers=32,
+        shuffle=False,
+        drop_last=False
+    ) 
+    print("data_loader")
     
 
-    # total_iter = int(len(train_datset) / 64)
+    total_iter = int(len(train_datset) / 64)
 
-    # start_time = time.time()
-    # for idx, (image, target) in enumerate(train_dataloader):
-    #     print("idx: {}/{}".format(idx, total_iter))
-    # print("waste time is ", time.time() - start_time)
+    start_time = time.time()
+    for idx, (image, target) in enumerate(train_dataloader):
+        print("idx: {}/{}".format(idx, total_iter))
+    print("waste time is ", time.time() - start_time)
 
 
 
