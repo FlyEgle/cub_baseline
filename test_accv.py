@@ -4,6 +4,7 @@ Test the cub validation result
 import os 
 import csv
 import json
+import random
 import torch
 import numpy as np
 import horovod.torch as hvd 
@@ -27,7 +28,7 @@ class TestDataSet(Dataset):
         self.test_file = "/data/remote/yy_git_code/cub_baseline/dataset/test_accv.txt"
         # self.test_file = "/data/remote/code/classification_trick_with_model/data/val_imagenet_128w.txt"
         self.test_list = [(x.strip().split(',')[0], int(float(x.strip().split(',')[1]))) for x in open(self.test_file).readlines()]
-        self.Resize_size = 380
+        self.Resize_size = 456
         # self.input_size = 300
         self.imagenet_normalization_paramters = transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
@@ -50,31 +51,20 @@ class TestDataSet(Dataset):
 
 
 
-class CUBModel:
-    def __init__(self, model_name, num_classes, model_weights):
-        self.model_name = model_name
-        self.num_classes = num_classes
-        self.imagenet_normalization_paramters = transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
-        )
-        is_pretrained = False
-        self.net = BuildModel(
-            self.model_name, self.num_classes, is_pretrained)()
-        model_state_dict = torch.load(model_weights, map_location="cpu")
-        self.net.load_state_dict(model_state_dict["model"])
-        # self.net.load_state_dict(model_state_dict)
+def AccvModel(model_name, num_classes, model_weights):
+    is_pretrained = False
+    net = BuildModel(model_name, num_classes, is_pretrained)()
+    model_state_dict = torch.load(model_weights, map_location="cpu")
+    net.load_state_dict(model_state_dict["model"])
+    return net
 
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
-        self.net.to(self.device)
 
-    def infer_batch(self, data):
-        self.net.eval()
-        data = data.to(self.device)
-        with torch.no_grad():
-            logits = self.net(data)
-        return logits
+def infer_batch(net, data):
+    net.eval()
+    data = data.cuda()
+    with torch.no_grad():
+        logits = net(data)
+    return logits    
 
 
 def calculate_accuracy(test_gt, test_pd):
@@ -105,7 +95,7 @@ def predict_logits(model, data_loader):
         with torch.no_grad():
             for idx, data in tqdm(enumerate(data_loader)):
                 image_tensor, image_path = data[0], data[1]
-                data_logits = model.infer_batch(image_tensor).cpu().numpy()
+                data_logits = infer_batch(model, image_tensor).cpu().numpy()
                 for i in range(len(image_path)):
                     result = {"image_path": image_path[i].split('/')[-1], "image_logits": data_logits[i].tolist()} 
                     result_logits.append(result)
@@ -115,6 +105,10 @@ if __name__ == "__main__":
     
     setup_seed(42)
     hvd.init()
+
+    if torch.cuda.is_available():
+        torch.cuda.set_device(hvd.local_rank())
+
     cudnn.benchmark = True
 
     test_file = "/data/remote/yy_git_code/cub_baseline/dataset/test_accv.txt"
@@ -122,7 +116,7 @@ if __name__ == "__main__":
     test_dict = {x.split(',')[0]: int(float(x.split(',')[1]))
                  for x in open(test_file).readlines()}
 
-    batch_size = 96
+    batch_size = 64
     num_workers = 32
     
     kwargs = {'num_workers': num_workers,
@@ -135,8 +129,9 @@ if __name__ == "__main__":
     testLoader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler, **kwargs)
     verbose = 1 if hvd.rank() == 0 else 0
 
-    model_ckpt = "/data/remote/output_ckpt_with_logs/accv/ckpt/efnet-b4_380_lr_01_50_epoch_cutmix/checkpoint-epoch-38.pth.tar"
-    model = CUBModel(model_name="efficientnet-b4", num_classes=5000, model_weights=model_ckpt)
+    model_ckpt = "/data/remote/output_ckpt_with_logs/accv/ckpt/efnetb5_456_32_lr_01_40_epoch_cutmix_cosinelr/checkpoint-epoch-38.pth.tar"
+    # model = CUBModel(model_name="resnet50", num_classes=5000, model_weights=model_ckpt)
+    model = AccvModel(model_name="efficientnet-b5", num_classes=5000, model_weights=model_ckpt)
     # csv for predict label
     # with open(os.path.join(PATH, "test_predict_accv_efb4.csv"), "w") as csvfile:
     #     writer = csv.writer(csvfile)
@@ -161,4 +156,4 @@ if __name__ == "__main__":
     logits_result = predict_logits(model, testLoader)
     for i in range(hvd.size()):
         if hvd.rank() == i:
-            np.save("/data/remote/yy_git_code/cub_baseline/logits/20201014/efnetb4_logits/efnet4_{}.npy".format(i), np.array(logits_result))
+            np.save("/data/remote/output_ckpt_with_logs/accv/logits/efnetb5-456/efnetb5_{}.npy".format(i), np.array(logits_result))

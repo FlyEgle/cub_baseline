@@ -60,3 +60,10 @@ transforms.Resize((self.BASE_RESIZE_SIZE, self.BASE_RESIZE_SIZE), Image.BILINEAR
 |resnet50 448|	41.63|
 |efnetb3+resnet50_448 ensemble2|	47.05|
 |ensemble1+ensemble2|47.395|
+
+- 20201016 update
+
+|model|test acc|trick|
+|:---:|:---:|:---:|
+|efnetb5 456|51.04|cosine_lr+cutmix+40epoch+no_warmup+32bs+0.1lr|
+|r50 448|47.64|cosine_lr+cutmix+40epoch+no_warmup+48bs+0.1lr|

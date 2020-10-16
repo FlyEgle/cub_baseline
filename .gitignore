@@ -1,3 +1,12 @@
 .vscode
 models/weights
 __pycache__
+dataset/*.txt
+dataset/generate_accv_dataset.py 
+*logits*
+*csv*
+*log 
+*.jpg
+!get_csv.py
+!get_logits.py
+!merget_logits.py
