@@ -67,3 +67,10 @@ transforms.Resize((self.BASE_RESIZE_SIZE, self.BASE_RESIZE_SIZE), Image.BILINEAR
 |:---:|:---:|:---:|
 |efnetb5 456|51.04|cosine_lr+cutmix+40epoch+no_warmup+32bs+0.1lr|
 |r50 448|47.64|cosine_lr+cutmix+40epoch+no_warmup+48bs+0.1lr|
+
+- 20201018 update
+  
+|model|test acc|trick|
+|:---:|:---:|:---:|
+|regnet12gf |53.578|cosine_lr+cutmix+40epoch+no_warmup+48bs+0.1lr|
+|regnet12gf + efnetb5 |55.758|same|
