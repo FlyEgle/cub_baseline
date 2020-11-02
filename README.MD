@@ -75,3 +75,17 @@ transforms.Resize((self.BASE_RESIZE_SIZE, self.BASE_RESIZE_SIZE), Image.BILINEAR
 |:---:|:---:|:---:|
 |regnet12gf |53.578|cosine_lr+cutmix+40epoch+no_warmup+48bs+0.1lr|
 |regnet12gf + efnetb5 |55.758|same|
+
+- 2201030 update
+    - 更新数据，使用r200feature进行检索
+
+
+- 20201102 update 
+
+特征检索数据进行clean是work的 r200 同等条件下提升1个点.
+
+
+|model|test acc|trick|
+|:---:|:---:|:---:|
+|[resnest200](https://drive.google.com/file/d/1k2t6wEn7C4u_TgLJrwsSG7m5AFIBh2lW/view?usp=sharing)  |57.228|cutmix+40epoch+no_warmup+48bs+0.1lr + clean data|
+|resnest200 + regnet12GF |60.082|same|
