@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn 
 import torch.nn.functional as F 
 
+import numpy as np 
+
 
 # ohem loss function
 def ohem_loss_function(logits, targets, rate):
@@ -74,6 +76,42 @@ class LabelSmoothingCrossEntropy(nn.Module):
         smooth_loss = -logprobs.mean(dim=-1)
         loss = self.confidence * nll_loss + self.smoothing * smooth_loss
         return loss.mean()
+
+# from https://github.com/kaidic/LDAM-DRW/blob/master/losses.py
+class LDAMLoss(nn.Module):
+    
+    def __init__(self, cls_num_list, max_m=0.5, s=30, weight=None):
+        super(LDAMLoss, self).__init__()
+        m_list = 1.0 / np.sqrt(np.sqrt(cls_num_list))
+        m_list = m_list * (max_m / np.max(m_list))
+        m_list = torch.cuda.FloatTensor(m_list)
+        self.m_list = m_list
+        assert s > 0
+        self.s = s
+        self.weight = weight
+
+    def forward(self, x, target):
+        x = x.float()
+        index = torch.zeros_like(x, dtype=torch.uint8)
+        index.scatter_(1, target.data.view(-1, 1), 1)
+        
+        index_float = index.type(torch.cuda.FloatTensor)
+        batch_m = torch.matmul(self.m_list[None, :], index_float.transpose(0,1))
+        batch_m = batch_m.view((-1, 1))
+        x_m = x - batch_m
+    
+        output = torch.where(index, x_m, x)
+        return F.cross_entropy(self.s*output, target, weight=self.weight)
+
+# DRW_weights 
+def drw_weights(epoch, cls_num_list, interval=30):
+    idx = epoch // interval
+    betas = [0, 0.9999]
+    effective_num = 1.0 - np.power(betas[idx], cls_num_list)
+    per_cls_weights = (1.0 - betas[idx]) / np.array(effective_num)
+    per_cls_weights = per_cls_weights / np.sum(per_cls_weights) * len(cls_num_list)
+    per_cls_weights = torch.FloatTensor(per_cls_weights).cuda()
+    return per_cls_weights
 
 
 if __name__ == "__main__":

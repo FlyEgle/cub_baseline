@@ -26,6 +26,7 @@ import torch.nn.functional as F
 import torch.utils.data.distributed
 import torch.backends.cudnn as cudnn
 
+from models.model_fc import ModelFCX2
 from models.build_model import BuildModel
 from models.bcnn import BCNN_fc
 from precise_bn import get_bn_modules
@@ -38,6 +39,12 @@ from dataset.imagenet_dataset import ImageNetTrainingDataset, ImageNetValidation
 
 # cutmix
 from utils.cutmix import cutmix_data
+# focalloss
+from models.focal_loss import EasyFocalLoss as FocalLoss
+# ohem labelsmooth
+from models.LossFunction import ohem_loss_function, LabelSmoothingCrossEntropy, LabelSmoothingLoss
+from models.class_balance_loss import CB_loss
+from models.LossFunction import LDAMLoss, drw_weights
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -125,6 +132,18 @@ parser.add_argument('--cutmix', type=int, default=0,
                     help="use cutmix for data augment")
 parser.add_argument('--beta', type=int, default=1,
                     help="beta for cutmix param with two image")
+parser.add_argument('--size_type', type=str, default="resnet50_448",
+                    help="model size type for train diff net arc")
+parser.add_argument('--use_focalloss', type=int, default=0,
+                    help="use focal loss for training")
+parser.add_argument('--labelSmooth', type=int, default=1,
+                    help="use labelSmooth for training")
+parser.add_argument('--resume_from_epoch', type=int, default=0,
+                    help="resume from epoch")
+parser.add_argument('--use_cbfocalloss', type=int, default=0,
+                    help="Use the class balance focalloss for training")
+parser.add_argument('--use_ldamloss', type=int, default=0,
+                    help="Use the ldamloss for training")
 
 
 class Metric_rank:
@@ -167,6 +186,10 @@ def train_with_iter(epoch, interval, batch_iter):
     if hvd.rank() == 0:
         print("="*50)
 
+    if args.use_ldamloss:
+        loss_weights = drw_weights(epoch, data_samples)
+        ldamloss = LDAMLoss(data_samples, max_m=0.5, s=30, weight=loss_weights)
+
     epoch_start = time.time()
     for batch_idx, (data, target) in enumerate(train_loader):
         batch_start = time.time()
@@ -188,11 +211,29 @@ def train_with_iter(epoch, interval, batch_iter):
         if args.cutmix:
             data, target_a, target_b, lam = cutmix_data(data, target, args.beta)
             output = model(data)
-            loss = F.cross_entropy(output, target_a) * lam + F.cross_entropy(output, target_b) * (1. - lam)
-        
+            if args.labelSmooth:
+                loss = labelsmooth_loss(output, target_a) * lam + labelsmooth_loss(output, target_b) * (1. - lam)
+            elif args.use_focalloss:
+                loss = focal_loss(output, target_a) * lam + focal_loss(output, target_b) * (1. - lam)
+            elif args.use_cbfocalloss:
+                loss = CB_loss(output, target_a, data_samples, args.num_classes, "focal") * lam + CB_loss(output, target_a, data_samples, args.num_classes, "focal") * (1. - lam)
+            elif args.use_ldamloss:
+                loss = ldamloss(output, target_a) * lam + ldamloss(output, target_b) * (1. - lam)            
+            else:
+                loss = F.cross_entropy(output, target_a) * lam + F.cross_entropy(output, target_b) * (1. - lam)
+
         else:
             output = model(data)
-            loss = F.cross_entropy(output, target)
+            if args.labelSmooth:
+                loss = labelsmooth_loss(output, target)
+            elif args.use_focalloss:
+                loss = focal_loss(output, target)
+            elif args.use_cbfocalloss:
+                loss = CB_loss(output, target, data_samples, args.num_classes, "focal")
+            elif args.use_ldamloss:
+                loss = ldamloss(output, target)
+            else:
+                loss = F.cross_entropy(output, target)
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -301,7 +342,7 @@ def validatin_acc():
             loss = F.cross_entropy(output, target)
             val_loss.update(loss)
             val_correct_sum = accuracy_for_validation(output, target)
-            
+
             # hvd_total_correct_sum = hvd.allreduce(total_correct_sum) * hvd.size()
             # validation_accuracy = float(
             # hvd_total_correct_sum.item() / (total_number.item() * hvd.size()))
@@ -312,9 +353,10 @@ def validatin_acc():
                 validation_loss_ = loss.item()
 
             val_rank_loss.update(validation_loss_)
-        
+
         hvd_total_correct_sum = hvd.allreduce(total_correct_sum) * hvd.size()
-        validation_accuracy = float(hvd_total_correct_sum.item() / (total_number.item() * hvd.size()))
+        validation_accuracy = float(
+            hvd_total_correct_sum.item() / (total_number.item() * hvd.size()))
 
         # validation_accuracy = float(
         #     total_correct_sum.item() / total_number.item()
@@ -370,7 +412,7 @@ def adjust_learning_rate_for_cosine_decay(epoch, batch_idx):
 
 
 def adjust_learning_rate_for_finetune(epoch, batch_idx):
-    if epoch < int(args.epochs * 0.8):
+    if epoch < int(args.epochs * 0.6):
         lr_adj = 1.
     else:
         lr_adj = 1e-1
@@ -412,6 +454,7 @@ def save_checkpoint(number, batch_epoch):
         # if epoch % interepoch == 0:
         torch.save(state, filepath)
 
+
 class Metric(object):
 
     def __init__(self, name):
@@ -421,7 +464,8 @@ class Metric(object):
 
     def update(self, val):
         if args.fp16:
-            self.sum += hvd.allreduce(val.detach().cpu().float(), name=self.name)
+            self.sum += hvd.allreduce(val.detach().cpu().float(),
+                                      name=self.name)
             self.n += 1
         else:
             self.sum += hvd.allreduce(val.detach().cpu(), name=self.name)
@@ -430,6 +474,7 @@ class Metric(object):
     @property
     def avg(self):
         return self.sum / self.n
+
 
 if __name__ == "__main__":
 
@@ -450,7 +495,7 @@ if __name__ == "__main__":
     cudnn.benchmark = True
 
     # If set > 0, will resume training from a given checkpoint.
-    resume_from_epoch = 0
+    resume_from_epoch = args.resume_from_epoch
     for try_epoch in range(args.epochs, 0, -1):
         resume_checkpoint = os.path.join(
             args.checkpoint_format, "checkpoint-{epoch}.pth.tar".format(epoch=try_epoch))
@@ -459,7 +504,8 @@ if __name__ == "__main__":
             break
 
     # Horovod: broadcast resume_from_epoch from rank 0 (which will have checkpoints) to other ranks.
-    resume_from_epoch = hvd.broadcast(torch.tensor(resume_from_epoch), root_rank=0, name='resume_from_epoch').item()
+    resume_from_epoch = hvd.broadcast(torch.tensor(
+        resume_from_epoch), root_rank=0, name='resume_from_epoch').item()
     # Horovod: print logs on the first worker.
     verbose = 1 if hvd.rank() == 0 else 0
     log_writer = SummaryWriter(args.log_dir) if hvd.rank() == 0 else None
@@ -469,13 +515,15 @@ if __name__ == "__main__":
     kwargs = {'num_workers': args.num_thread,
               'pin_memory': True} if args.cuda else {}
     # training dataset
-    trainDataset = ImageNetTrainingDataset(args.train_dir)
+    trainDataset = ImageNetTrainingDataset(args.train_dir, args.size_type)
+    data_samples = trainDataset.data_samples
     trainSampler = torch.utils.data.distributed.DistributedSampler(
         trainDataset,
         num_replicas=hvd.size(),
         rank=hvd.rank(),
         shuffle=True
     )
+    # loss_weights =
 
     train_loader = torch.utils.data.DataLoader(
         trainDataset,
@@ -485,7 +533,7 @@ if __name__ == "__main__":
     )
 
     if args.val_dir is not None and args.val_dir != "":
-        valDataset = ImageNetValidationDataset(args.val_dir)
+        valDataset = ImageNetValidationDataset(args.val_dir, args.size_type)
         valSampler = torch.utils.data.distributed.DistributedSampler(
             valDataset,
             num_replicas=hvd.size(),
@@ -525,9 +573,25 @@ if __name__ == "__main__":
     else:
         imagenet_pretrain = False
         if hvd.rank() == 0:
-            print("Not use the imagenet pretrain")
-    build_model = BuildModel(args.model_name, args.num_classes, imagenet_pretrain)
+            print("Use the finetune model")
+
+    # model
+
+    build_model = BuildModel(
+        args.model_name, args.num_classes, imagenet_pretrain)
     model = build_model()
+
+    # labelsmooth loss
+    labelsmooth_loss = LabelSmoothingCrossEntropy()
+
+
+    # freeze feature and release the fc
+    if args.model_freeze:
+        for p in model.parameters():
+            p.requires_grad = False
+        # model.fc.parameters.requires_grad = True
+        for param in model.fc.parameters():
+            param.requires_grad = True
 
     # fp16
     if args.fp16:
@@ -535,9 +599,9 @@ if __name__ == "__main__":
         for bn in get_bn_modules(model):
             bn.float()
 
-    # model = BCNN_fc(num_classes=args.num_classes)
     if hvd.rank() == 0:
         print(model)
+
     # load the pretrain model weights
     # if hvd.rank() == 0:
     if args.pretrainmodel.endswith("tar"):
@@ -554,6 +618,9 @@ if __name__ == "__main__":
     lr_scaler = args.batches_per_allreduce * \
         hvd.size() if not args.use_adasum else 1
 
+    if args.use_focalloss:
+        focal_loss = FocalLoss()
+
     if args.cuda:
         # Move model to GPU.
         model.cuda()
@@ -564,9 +631,8 @@ if __name__ == "__main__":
     # Horovod: scale learning rate by the number of GPUs.
     if args.model_freeze:
         # if args.optimizer == "sgd":
-        optimizer = optim.SGD(filter(lambda p: p.requires_grad, model.parameters()),
-                              lr=(args.base_lr * lr_scaler),
-                              momentum=args.momentum, weight_decay=args.wd, nesterov=True)
+        optimizer = optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=(
+            args.base_lr * lr_scaler), momentum=args.momentum, weight_decay=args.wd, nesterov=True)
 
     else:
         if args.optimizer == "sgd":
@@ -595,7 +661,7 @@ if __name__ == "__main__":
 
     if resume_from_epoch > 0 and hvd.rank() == 0:
         filepath = os.path.join(
-            args.checkpoint_format, "checkpoint-{epoch}.pth.tar".format(epoch=resume_from_epoch))
+            args.checkpoint_format, "checkpoint-epoch-{epoch}.pth.tar".format(epoch=resume_from_epoch))
         checkpoint = torch.load(filepath)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
@@ -624,7 +690,11 @@ if __name__ == "__main__":
             "num_wrokers ": args.num_thread,
             "Use ImageNet Pretrain ": imagenet_pretrain,
             "Optimizer ": args.optimizer,
-            "loss_function ": "softmax"
+            "classifciaiton activation": "softmax",
+            "sizetype": args.size_type,
+            "cutmix": args.cutmix,
+            "focaloss": args.use_focalloss,
+            "labelsmooth": args.labelSmooth
         }
         Information_data = json.dumps(
             information_kwargs, sort_keys=True, indent=4, separators=(',', ':'))
@@ -632,10 +702,13 @@ if __name__ == "__main__":
 
     # batch 迭代次数
     batch_iter = 0
+    if args.resume_from_epoch > 0:
+        batch_iter += args.resume_from_epoch * total_train_sampler
+
     T = int(args.epochs - args.warmup_epochs)
     total_sampler_batch = T * total_train_sampler
     # training
     for epoch in range(resume_from_epoch, args.epochs):
         batch_iter = train_with_iter(epoch, 0, batch_iter)
-    
+
     print("Fnish the train loop!!!")
