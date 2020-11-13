@@ -88,7 +88,18 @@ transforms.Resize((self.BASE_RESIZE_SIZE, self.BASE_RESIZE_SIZE), Image.BILINEAR
 |resnest200 + regnet12gf + efnetb5 |58.558%|same|
 
 
+- 20201111 update 
+
+|model|test acc|trick|
+|:---:|:---:|:---:|
+|resnest101 + resnest200 + resnest 269 |60.135 |data_clean_v3.log + freeze_fc + focalloss + 40 epoch + cutmix|
+|resnest200 data_v1 + resnest200 data_v2 + resnest200 data_v3 | 60.808| freeze_fc + focalloss + 40 epoch + cutmix |
+|ensemble|61.548|mean|
+
+
 # 数据记录
 
 - /data/remote/yy_git_code/cub_baseline/dataset/train_accv_clean_v2.log 使用56.145模型进行数据清洗
 - /data/remote/yy_git_code/cub_baseline/dataset/train_accv_clean_v3.log 对重复标签的数据进行清洗
+- /data/remote/yy_git_code/cub_baseline/dataset/train_accv_clean_v3_remove_small.log remove小于48尺寸的图片
+- /data/remote/yy_git_code/cub_baseline/dataset/train_accv_clean_v3_with_repeat_plabel.log 使用resnest系列的3个模型对有二义性的数据生成伪标签，填充到cleanv3里面进行训练。
