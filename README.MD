@@ -1,5 +1,9 @@
 # CUB_200_2011 FGCV baseline
 
+# 比赛详情&回顾
+https://zhuanlan.zhihu.com/p/347359127
+
+
 # pretrain model
 resnest50 -> 75.58%
 
